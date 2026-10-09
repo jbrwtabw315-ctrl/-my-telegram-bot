@@ -12,17 +12,15 @@ from telegram.ext import (
     filters,
 )
 
-# توكن البوت يقرأ من متغيرات البيئة في ريلواي، أو يمكنك وضعه هنا مباشرة
+# توكن البوت
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8564085814:AAFr9XBwDA80jteJyxKKCBnAU9r5S55SMY4")
 TWELVE_DATA_API_KEY = "625159396fa746229e049c853ee698bf"
 API_URL = "https://api.twelvedata.com/time_series"
 
 ADMIN_ID = 6493871389 
-# قائمة الأيديهات المفعم لها اشتراك (قم بإضافة أي أيدي مفعل هنا أو دعه لك وحدك في البداية)
 ALLOWED_USERS = [6493871389]
 MIN_SIGNAL_SCORE = 75
 
-# معرف حسابك أو يوزرك لتواصل العملاء (استبدله بيوزرك في تيليجرام بدون @)
 ADMIN_USERNAME = "Marwa483"
 
 logging.basicConfig(
@@ -44,11 +42,11 @@ def get_market_data(symbol: str) -> pd.DataFrame:
     data = response.json()
 
     if data.get("status") == "error":
-        raise Exception(data.get("message", "API Error"))
+        raise Exception(data.get("message", "API Error - تأكد من صحة اسم الزوج أو توفر البيانات في المنصة"))
         
     values = data.get("values", [])
     if not values:
-        raise Exception("لم يتم استرجاع بيانات من السوق.")
+        raise Exception("لم يتم استرجاع بيانات من السوق لهذا الزوج.")
         
     df = pd.DataFrame(values)
     df = df.iloc[::-1].reset_index(drop=True)
@@ -133,7 +131,6 @@ def analyze_market(df: pd.DataFrame) -> dict:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # التحقق مما إذا كان المستخدم مشتركاً أم لا
     if user_id not in ALLOWED_USERS:
         await update.message.reply_text(
             "🔒 **عذراً، هذا البوت مدفوع ويتطلب اشتراكاً مفـعلاً.**\n\n"
@@ -149,15 +146,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔥 أهلاً بك يا غالي في 4B AI TRADER PRO\n\n"
         "حسابك مفعل بنجاح ✅\n"
         "أرسل اسم الزوج الآن للحصول على التحليل وإشارات البيع والشراء:\n"
-        "EUR/USD أو GBP/USD"
+        "مثل: EUR/USD أو GBP/USD"
     )
 
 async def handle_user_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+    if not update.message or not update.message.text:
         return
     
     user_id = update.effective_user.id
-    if user_id not in ALLOW_USERS:
+    if user_id not in ALLOWED_USERS:
         await update.message.reply_text(
             f"❌ عذراً، حسابك غير مفعل.\nالرجاء التواصل مع المالك لتفعيل اشتراكك وإرسال إيصال الدفع: @{ADMIN_USERNAME}\nآيديك هو: `{user_id}`",
             parse_mode="Markdown"
@@ -167,16 +164,28 @@ async def handle_user_messages(update: Update, context: ContextTypes.DEFAULT_TYP
     await analyze_command(update, context)
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    symbol = update.message.text.strip().upper().replace("-", "/").replace(" ", "")
+    raw_text = update.message.text.strip().upper()
+    
+    # تجاهل الأوامر التي تبدأ بـ / مثل /start
+    if raw_text.startswith("/"):
+        return
+
+    # تنسيق اسم الزوج (إزالة المسافات وتوحيد الفواصل)
+    symbol = raw_text.replace("-", "/").replace(" ", "")
+    
+    # إذا كتب المستخدم العملات متصلة مثل EURUSD يتم تحويلها تلقائياً إلى EUR/USD
+    if "/" not in symbol and len(symbol) == 6:
+        symbol = symbol[:3] + "/" + symbol[3:]
+
     if "/" not in symbol:
-        await update.message.reply_text("❌ صيغة خاطئة. اكتب الزوج هكذا: EUR/USD")
+        await update.message.reply_text("❌ صيغة خاطئة. اكتب الزوج هكذا: EUR/USD أو EURUSD")
         return
 
     await update.message.reply_text(f"🔎 جاري فحص وتحليل {symbol} على فريم 1M...")
 
     try:
         df = get_market_data(symbol)
-        if len(df) < 60:
+        if len(df) < 50:
             raise Exception("البيانات غير كافية للتحليل.")
         
         df = calculate_indicators(df)
@@ -211,7 +220,7 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
     except Exception as e:
         logger.exception("Analysis error")
-        await update.message.reply_text(f"❌ حدث خطأ أثناء التحليل: {e}")
+        await update.message.reply_text(f"❌ حدث خطأ أثناء التحليل: تأكد من أن الزوج مدعوم ومتاح في السوق (مثال: EUR/USD).")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
