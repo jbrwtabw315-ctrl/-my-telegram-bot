@@ -12,7 +12,7 @@ from telegram.ext import (
     filters,
 )
 
-TELEGRAM_TOKEN = "8564085814:AAFr9XBwDA80jteJyxKKCBnAU9r5S55SMY4"
+TELEGRAM_TOKEN = "625159396fa746229e049c853ee698bf"
 TWELVE_DATA_API_KEY = "625159396fa746229e049c853ee698bf"
 API_URL = "https://api.twelvedata.com/time_series"
 
