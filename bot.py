@@ -27,7 +27,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def get_market_data(symbol: str):
+def get_market_data(symbol: str) -> pd.DataFrame:
     params = {
         "symbol": symbol,
         "interval": "1min",
@@ -41,7 +41,90 @@ def get_market_data(symbol: str):
 
     if data.get("status") == "error":
         raise Exception(data.get("message", "API Error"))
-    return data
+        
+    values = data.get("values", [])
+    if not values:
+        raise Exception("لم يتم استرجاع بيانات من السوق.")
+        
+    df = pd.DataFrame(values)
+    df = df.iloc[::-1].reset_index(drop=True)
+    
+    for col in ["open", "high", "low", "close"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+    return df
+
+def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    df["EMA9"] = df["close"].ewm(span=9, adjust=False).mean()
+    df["EMA21"] = df["close"].ewm(span=21, adjust=False).mean()
+    df["EMA50"] = df["close"].ewm(span=50, adjust=False).mean()
+
+    delta = df["close"].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    
+    avg_gain = gain.ewm(alpha=1/14, min_periods=14).mean()
+    avg_loss = loss.ewm(alpha=1/14, min_periods=14).mean()
+    
+    rs = avg_gain / avg_loss
+    df["RSI"] = 100 - (100 / (1 + rs))
+    return df
+
+def analyze_market(df: pd.DataFrame) -> dict:
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    
+    rsi = latest["RSI"]
+    score_buy = 50
+    score_sell = 50
+    reasons_buy = []
+    reasons_sell = []
+
+    if latest["EMA9"] > latest["EMA21"]:
+        score_buy += 15
+        reasons_buy.append("متوسط EMA9 أعلى من EMA21 (إيجابي)")
+    else:
+        score_sell += 15
+        reasons_sell.append("متوسط EMA9 أقل من EMA21 (سلبي)")
+
+    if rsi < 35:
+        score_buy += 25
+        reasons_buy.append(f"مؤشر القوة النسبية RSI منخفض ({rsi:.2f}) - تشبع بيعي")
+    elif rsi > 65:
+        score_sell += 25
+        reasons_sell.append(f"مؤشر القوة النسبية RSI مرتفع ({rsi:.2f}) - تشبع شرائي")
+
+    if latest["close"] > prev["close"]:
+        score_buy += 10
+        reasons_buy.append("السعر الحالي مرتفع عن الشمعة السابقة")
+    else:
+        score_sell += 10
+        reasons_sell.append("السعر الحالي منخفض عن الشمعة السابقة")
+
+    if score_buy >= MIN_SIGNAL_SCORE and score_buy > score_sell:
+        return {
+            "signal": "BUY",
+            "score": score_buy,
+            "price": latest["close"],
+            "rsi": rsi,
+            "reasons": reasons_buy
+        }
+
+    if score_sell >= MIN_SIGNAL_SCORE and score_sell > score_buy:
+        return {
+            "signal": "SELL",
+            "score": score_sell,
+            "price": latest["close"],
+            "rsi": rsi,
+            "reasons": reasons_sell
+        }
+
+    return {
+        "signal": "NO_TRADE",
+        "score": max(score_buy, score_sell),
+        "price": latest["close"],
+        "rsi": rsi
+    }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -49,7 +132,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = f"@{update.effective_user.username}" if update.effective_user.username else "لا يوجد"
 
     if user_id not in ALLOWED_USERS:
-        admin_username = "Marwa483"  # يوزرك الخاص لتلقي الاشتراكات
+        admin_username = "marwa4839"  # يوزرك الصحيح
         
         await update.message.reply_text(
             "⚠️ **غير مصرح لك باستخدام البوت حالياً.**\n\n"
@@ -83,7 +166,7 @@ async def handle_user_messages(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     user_id = update.effective_user.id
 
-    if user_id not in ALLOW_USERS:
+    if user_id not in ALLOWED_USERS:
         user_name = update.effective_user.full_name
         if update.message.photo:
             await context.bot.send_photo(
@@ -116,7 +199,40 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🔎 جاري فحص وتحليل {symbol} على فريم 1M...")
 
     try:
-        await update.message.reply_text("⚠️ بيانات السوق جاهزة.")
+        df = get_market_data(symbol)
+        if len(df) < 60:
+            raise Exception("البيانات غير كافية للتحليل.")
+        
+        df = calculate_indicators(df)
+        result = analyze_market(df)
+
+        if result["signal"] == "NO_TRADE":
+            msg = (
+                "⚪ 4B AI TRADER PRO\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"💱 الزوج: {symbol}\n"
+                f"💰 السعر: {result['price']:.5f}\n"
+                f"📈 RSI: {result['rsi']:.2f}\n\n"
+                "🚫 لا توجد صفقة حالياً\n"
+                "الشروط غير كافية، انتظر فرصة أوضح."
+            )
+        else:
+            direction = "🟢 شراء (CALL)" if result["signal"] == "BUY" else "🔴 بيع (PUT)"
+            reasons_txt = "\n".join(f"• {r}" for r in result["reasons"])
+            msg = (
+                "🔥 4B AI TRADER PRO\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"💱 الزوج: {symbol}\n"
+                f"📌 الإشارة: {direction}\n"
+                f"⏳ مدة الصفقة: 1 دقيقة\n\n"
+                f"📊 قوة الإشارة: {result['score']}%\n"
+                f"💰 السعر: {result['price']:.5f}\n"
+                f"📈 RSI: {result['rsi']:.2f}\n\n"
+                "🧠 الأسباب:\n"
+                f"{reasons_txt}\n"
+                "━━━━━━━━━━━━━━━━━━"
+            )
+        await update.message.reply_text(msg)
     except Exception as e:
         logger.exception("Analysis error")
         await update.message.reply_text(f"❌ حدث خطأ أثناء التحليل: {e}")
