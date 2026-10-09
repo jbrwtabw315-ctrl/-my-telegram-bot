@@ -32,14 +32,11 @@ API_URL = "https://api.twelvedata.com/time_series"
 INTERVAL = "1min"
 OUTPUT_SIZE = 150
 
-# أقل درجة مطلوبة لإظهار الصفقة
 MIN_SIGNAL_SCORE = 75
 
-# قائمة المشتركين المسموح لهم (تم تضمين الآيدي الخاص بك 649387138)
 ALLOWED_USERS = [649387138]
 
 def check_subscription(user_id: int) -> bool:
-    """التحقق مما إذا كان المستخدم مشتركاً ومصرحاً له بالاستخدام"""
     return user_id in ALLOWED_USERS
 
 logging.basicConfig(
@@ -108,10 +105,6 @@ def get_market_data(symbol: str):
 
 def calculate_indicators(df):
 
-    # -------------------------
-    # EMA
-    # -------------------------
-
     df["EMA9"] = df["close"].ewm(
         span=9,
         adjust=False
@@ -126,10 +119,6 @@ def calculate_indicators(df):
         span=50,
         adjust=False
     ).mean()
-
-    # -------------------------
-    # RSI 14
-    # -------------------------
 
     delta = df["close"].diff()
 
@@ -154,10 +143,6 @@ def calculate_indicators(df):
         100 / (1 + rs)
     )
 
-    # -------------------------
-    # MACD
-    # -------------------------
-
     ema12 = df["close"].ewm(
         span=12,
         adjust=False
@@ -175,10 +160,6 @@ def calculate_indicators(df):
         adjust=False
     ).mean()
 
-    # -------------------------
-    # ATR
-    # -------------------------
-
     previous_close = df["close"].shift(1)
 
     tr1 = df["high"] - df["low"]
@@ -191,10 +172,6 @@ def calculate_indicators(df):
     ).max(axis=1)
 
     df["ATR"] = true_range.rolling(14).mean()
-
-    # -------------------------
-    # Support / Resistance
-    # -------------------------
 
     df["SUPPORT"] = (
         df["low"]
@@ -228,14 +205,12 @@ def candle_analysis(row):
 
     body_ratio = body / candle_range
 
-    # شمعة صاعدة قوية
     if (
         row["close"] > row["open"]
         and body_ratio >= 0.55
     ):
         return "BULLISH"
 
-    # شمعة هابطة قوية
     if (
         row["close"] < row["open"]
         and body_ratio >= 0.55
@@ -260,10 +235,6 @@ def analyze_market(df):
     reasons_buy = []
     reasons_sell = []
 
-    # ========================================================
-    # EMA TREND
-    # ========================================================
-
     if (
         latest["EMA9"] > latest["EMA21"]
         and latest["EMA21"] > latest["EMA50"]
@@ -282,10 +253,6 @@ def analyze_market(df):
             "ترتيب المتوسطات EMA يدعم الهبوط"
         )
 
-    # ========================================================
-    # RSI
-    # ========================================================
-
     rsi = latest["RSI"]
 
     if 52 <= rsi <= 68:
@@ -299,10 +266,6 @@ def analyze_market(df):
         reasons_sell.append(
             f"RSI داعم للبيع ({rsi:.1f})"
         )
-
-    # ========================================================
-    # MACD
-    # ========================================================
 
     if (
         latest["MACD"]
@@ -324,10 +287,6 @@ def analyze_market(df):
             "زخم MACD هابط"
         )
 
-    # ========================================================
-    # CANDLE
-    # ========================================================
-
     candle = candle_analysis(latest)
 
     if candle == "BULLISH":
@@ -342,10 +301,6 @@ def analyze_market(df):
             "الشمعة الحالية هابطة"
         )
 
-    # ========================================================
-    # PRICE POSITION
-    # ========================================================
-
     if latest["close"] > latest["EMA21"]:
         score_buy += 10
         reasons_buy.append(
@@ -357,10 +312,6 @@ def analyze_market(df):
         reasons_sell.append(
             "السعر أسفل EMA21"
         )
-
-    # ========================================================
-    # SUPPORT / RESISTANCE
-    # ========================================================
 
     support = latest["SUPPORT"]
     resistance = latest["RESISTANCE"]
@@ -391,5 +342,173 @@ def analyze_market(df):
     ):
         score_sell += 15
         reasons_sell.append(
-            "ي
+            "يوجد مجال نسبي قبل الدعم"
+        )
 
+    if score_buy >= MIN_SIGNAL_SCORE and score_buy > score_sell:
+
+        return {
+            "signal": "BUY",
+            "score": score_buy,
+            "price": price,
+            "rsi": rsi,
+            "support": support,
+            "resistance": resistance,
+            "reasons": reasons_buy,
+            "candle": candle,
+            "time": latest["datetime"]
+        }
+
+    if score_sell >= MIN_SIGNAL_SCORE and score_sell > score_buy:
+
+        return {
+            "signal": "SELL",
+            "score": score_sell,
+            "price": price,
+            "rsi": rsi,
+            "support": support,
+            "resistance": resistance,
+            "reasons": reasons_sell,
+            "candle": candle,
+            "time": latest["datetime"]
+        }
+
+    return {
+        "signal": "NO_TRADE",
+        "score": max(
+            score_buy,
+            score_sell
+        ),
+        "price": price,
+        "rsi": rsi,
+        "support": support,
+        "resistance": resistance,
+        "time": latest["datetime"]
+    }
+
+
+# ============================================================
+# FORMAT SIGNAL
+# ============================================================
+
+def format_signal(symbol, result):
+
+    if result["signal"] == "NO_TRADE":
+
+        return (
+            "⚪ 4B AI TRADER PRO\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"💱 الزوج: {symbol}\n"
+            "⏱️ الفريم: 1M\n\n"
+            "🚫 لا توجد صفقة حاليًا\n\n"
+            "السوق لا يحقق شروط الدخول المطلوبة.\n"
+            "⏳ انتظر فرصة أوضح.\n"
+            "━━━━━━━━━━━━━━━━━━"
+        )
+
+    direction = (
+        "🟢 شراء CALL"
+        if result["signal"] == "BUY"
+        else
+        "🔴 بيع PUT"
+    )
+
+    reasons = "\n".join(
+        f"• {reason}"
+        for reason in result["reasons"]
+    )
+
+    return (
+        "🔥 4B AI TRADER PRO\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"💱 الزوج: {symbol}\n"
+        "⏱️ الفريم: 1M\n\n"
+        f"📌 الإشارة: {direction}\n"
+        f"🎯 وقت الدخول: الآن\n"
+        "⏳ مدة الصفقة: 1 دقيقة\n\n"
+        f"📊 قوة الإشارة: {result['score']}%\n"
+        f"💰 السعر: {result['price']:.5f}\n"
+        f"📈 RSI: {result['rsi']:.2f}\n\n"
+        "🧠 أسباب الإشارة:\n"
+        f"{reasons}\n\n"
+        "⚠️ لا توجد توصية مضمونة؛ "
+        "تحقق من السعر على منصتك قبل التنفيذ.\n"
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+
+# ============================================================
+# /START
+# ============================================================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    user_id = update.effective_user.id
+
+    if not check_subscription(user_id):
+        await update.message.reply_text(
+            "⚠️ عذراً، هذا البوت خاص بالمشتركين فقط.\n\n"
+            f"معرفك (ID) الخاص بك هو: `{user_id}`\n\n"
+            "للاشتراك وتفعيل حسابك، قم بإرسال هذا المعرف مع إيصال الدفع للإدارة."
+        )
+        return
+
+    await update.message.reply_text(
+        "🔥 أهلاً بك في 4B AI TRADER PRO\n\n"
+        "📊 Forex 1M\n"
+        "🧠 تحليل متعدد المؤشرات\n"
+        "🎯 صفقات يدوية فقط\n\n"
+        "أرسل الزوج بهذا الشكل:\n"
+        "EUR/USD\n\n"
+        "أو:\n"
+        "GBP/USD\n\n"
+        "إذا لم تتوفر شروط قوية سأخبرك:\n"
+        "🚫 لا توجد صفقة حاليًا"
+    )
+
+
+# ============================================================
+# /HELP
+# ============================================================
+
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    user_id = update.effective_user.id
+    if not check_subscription(user_id):
+        await update.message.reply_text("⚠️ عذراً، هذا البوت للمشتركين فقط.")
+        return
+
+    await update.message.reply_text(
+        "📖 طريقة الاستخدام:\n\n"
+        "أرسل اسم زوج الفوركس فقط.\n\n"
+        "مثال:\n"
+        "EUR/USD\n\n"
+        "أو:\n"
+        "GBP/USD\n\n"
+        "البوت يحلل السوق على فريم 1M "
+        "ويعطي صفقة فقط إذا تجاوزت شروط "
+        "القوة المحددة."
+    )
+
+
+# ============================================================
+# SYMBOL MESSAGE (ANALYZE)
+# ============================================================
+
+async def analyze_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not update.message:
+        return
+
+    user_id = update.effective_user.id
+
+    if not check_subscription(user_id):
+        await update.message.reply_text(
+            "⚠️ عذراً، أنت لست مشتركاً مفَعلاً في البوت.\n"
