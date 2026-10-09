@@ -1,6 +1,6 @@
 # ============================================================
 # 4B AI TRADER PRO
-# FOREX 1M - MANUAL SIGNAL EDITION
+# FOREX 1M - MANUAL SIGNAL EDITION (WITH SUBSCRIPTION SYSTEM)
 # ============================================================
 
 import os
@@ -21,11 +21,11 @@ from telegram.ext import (
 )
 
 # ============================================================
-# CONFIG
+# CONFIG & SUBSCRIPTION LIST
 # ============================================================
 
-TELEGRAM_TOKEN="8564085814:AAFr9XBwDA80jteJyxKKCBnAU9r5S55SMY4"
-TWELVE_DATA_API_KEY ="625159396fa746229e049c853ee698bf"
+TELEGRAM_TOKEN = "8564085814:AAFr9XBwDA80jteJyxKKCBnAU9r5S55SMY4"
+TWELVE_DATA_API_KEY = "625159396fa746229e049c853ee698bf"
 
 API_URL = "https://api.twelvedata.com/time_series"
 
@@ -34,6 +34,13 @@ OUTPUT_SIZE = 150
 
 # أقل درجة مطلوبة لإظهار الصفقة
 MIN_SIGNAL_SCORE = 75
+
+# قائمة المشتركين المسموح لهم (تم تضمين الآيدي الخاص بك 649387138)
+ALLOWED_USERS = [649387138]
+
+def check_subscription(user_id: int) -> bool:
+    """التحقق مما إذا كان المستخدم مشتركاً ومصرحاً له بالاستخدام"""
+    return user_id in ALLOWED_USERS
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -359,7 +366,6 @@ def analyze_market(df):
     resistance = latest["RESISTANCE"]
     price = latest["close"]
 
-    # لا ندخل شراء مباشرة تحت مقاومة قريبة
     resistance_distance = (
         resistance - price
     )
@@ -385,294 +391,5 @@ def analyze_market(df):
     ):
         score_sell += 15
         reasons_sell.append(
-            "يوجد مجال نسبي قبل الدعم"
-        )
+            "ي
 
-    # ========================================================
-    # FINAL DECISION
-    # ========================================================
-
-    if score_buy >= MIN_SIGNAL_SCORE and score_buy > score_sell:
-
-        return {
-            "signal": "BUY",
-            "score": score_buy,
-            "price": price,
-            "rsi": rsi,
-            "support": support,
-            "resistance": resistance,
-            "reasons": reasons_buy,
-            "candle": candle,
-            "time": latest["datetime"]
-        }
-
-    if score_sell >= MIN_SIGNAL_SCORE and score_sell > score_buy:
-
-        return {
-            "signal": "SELL",
-            "score": score_sell,
-            "price": price,
-            "rsi": rsi,
-            "support": support,
-            "resistance": resistance,
-            "reasons": reasons_sell,
-            "candle": candle,
-            "time": latest["datetime"]
-        }
-
-    # ========================================================
-    # NO TRADE
-    # ========================================================
-
-    return {
-        "signal": "NO_TRADE",
-        "score": max(
-            score_buy,
-            score_sell
-        ),
-        "price": price,
-        "rsi": rsi,
-        "support": support,
-        "resistance": resistance,
-        "time": latest["datetime"]
-    }
-
-
-# ============================================================
-# FORMAT SIGNAL
-# ============================================================
-
-def format_signal(symbol, result):
-
-    if result["signal"] == "NO_TRADE":
-
-        return (
-            "⚪ 4B AI TRADER PRO\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            f"💱 الزوج: {symbol}\n"
-            "⏱️ الفريم: 1M\n\n"
-            "🚫 لا توجد صفقة حاليًا\n\n"
-            "السوق لا يحقق شروط الدخول المطلوبة.\n"
-            "⏳ انتظر فرصة أوضح.\n"
-            "━━━━━━━━━━━━━━━━━━"
-        )
-
-    direction = (
-        "🟢 شراء CALL"
-        if result["signal"] == "BUY"
-        else
-        "🔴 بيع PUT"
-    )
-
-    reasons = "\n".join(
-        f"• {reason}"
-        for reason in result["reasons"]
-    )
-
-    return (
-        "🔥 4B AI TRADER PRO\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"💱 الزوج: {symbol}\n"
-        "⏱️ الفريم: 1M\n\n"
-        f"📌 الإشارة: {direction}\n"
-        f"🎯 وقت الدخول: الآن\n"
-        "⏳ مدة الصفقة: 1 دقيقة\n\n"
-        f"📊 قوة الإشارة: {result['score']}%\n"
-        f"💰 السعر: {result['price']:.5f}\n"
-        f"📈 RSI: {result['rsi']:.2f}\n\n"
-        "🧠 أسباب الإشارة:\n"
-        f"{reasons}\n\n"
-        "⚠️ لا توجد توصية مضمونة؛ "
-        "تحقق من السعر على منصتك قبل التنفيذ.\n"
-        "━━━━━━━━━━━━━━━━━━"
-    )
-
-
-# ============================================================
-# /START
-# ============================================================
-
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    await update.message.reply_text(
-        "🔥 أهلاً بك في 4B AI TRADER PRO\n\n"
-        "📊 Forex 1M\n"
-        "🧠 تحليل متعدد المؤشرات\n"
-        "🎯 صفقات يدوية فقط\n\n"
-        "أرسل الزوج بهذا الشكل:\n"
-        "EUR/USD\n\n"
-        "أو:\n"
-        "GBP/USD\n\n"
-        "إذا لم تتوفر شروط قوية سأخبرك:\n"
-        "🚫 لا توجد صفقة حاليًا"
-    )
-
-
-# ============================================================
-# /HELP
-# ============================================================
-
-async def help_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    await update.message.reply_text(
-        "📖 طريقة الاستخدام:\n\n"
-        "أرسل اسم زوج الفوركس فقط.\n\n"
-        "مثال:\n"
-        "EUR/USD\n\n"
-        "أو:\n"
-        "GBP/USD\n\n"
-        "البوت يحلل السوق على فريم 1M "
-        "ويعطي صفقة فقط إذا تجاوزت شروط "
-        "القوة المحددة."
-    )
-
-
-# ============================================================
-# SYMBOL MESSAGE
-# ============================================================
-
-async def analyze_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if not update.message:
-        return
-
-    symbol = update.message.text.strip().upper()
-
-    # تنظيف بعض الصيغ
-    symbol = symbol.replace("-", "/")
-    symbol = symbol.replace(" ", "")
-
-    if "/" not in symbol:
-        await update.message.reply_text(
-            "❌ صيغة الزوج غير صحيحة.\n\n"
-            "اكتب مثلًا:\n"
-            "EUR/USD"
-        )
-        return
-
-    await update.message.reply_text(
-        f"🔎 جاري تحليل {symbol}\n"
-        "⏱️ Forex 1M..."
-    )
-
-    try:
-
-        df = get_market_data(symbol)
-
-        if len(df) < 60:
-            raise Exception(
-                "بيانات السوق غير كافية للتحليل."
-            )
-
-        df = calculate_indicators(df)
-
-        result = analyze_market(df)
-
-        message = format_signal(
-            symbol,
-            result
-        )
-
-        await update.message.reply_text(
-            message
-        )
-
-    except Exception as error:
-
-        logger.exception(
-            "Analysis error"
-        )
-
-        await update.message.reply_text(
-            "❌ حدث خطأ أثناء تحليل الزوج.\n\n"
-            f"السبب: {error}\n\n"
-            "تأكد من اسم الزوج ومفتاح API."
-        )
-
-
-# ============================================================
-# ERROR HANDLER
-# ============================================================
-
-async def error_handler(
-    update: object,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    logger.error(
-        "Exception while handling update:",
-        exc_info=context.error
-    )
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
-def main():
-
-    if not TELEGRAM_TOKEN:
-        raise RuntimeError(
-            "ضع TELEGRAM_TOKEN في Environment Variables"
-        )
-
-    if not TWELVE_DATA_API_KEY:
-        raise RuntimeError(
-            "ضع TWELVE_DATA_API_KEY في Environment Variables"
-        )
-
-    application = (
-        Application.builder()
-        .token(TELEGRAM_TOKEN)
-        .build()
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "help",
-            help_command
-        )
-    )
-
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            analyze_command
-        )
-    )
-
-    application.add_error_handler(
-        error_handler
-    )
-
-    print(
-        "🔥 4B AI TRADER PRO - FOREX 1M STARTED"
-    )
-
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES
-    )
-
-
-# ============================================================
-# RUN
-# ============================================================
-
-if __name__ == "__main__":
-    main()
