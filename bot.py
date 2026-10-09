@@ -17,7 +17,7 @@ TWELVE_DATA_API_KEY = "625159396fa746229e049c853ee698bf"
 API_URL = "https://api.twelvedata.com/time_series"
 
 ADMIN_ID = 6493871389 
-ALLOWED_USERS = [6493871389]  # الأيدي الخاص بك
+ALLOWED_USERS = [6493871389]
 MIN_SIGNAL_SCORE = 75
 
 logging.basicConfig(
@@ -187,9 +187,9 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_user_messages))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_messages))
     print("PRO TRADER STARTED")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling()
 
 if __name__ == "__main__":
-    main()  # تم إضافة الأقواس هنا لتشغيل الدالة بشكل صحيح
+    main()
