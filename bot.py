@@ -19,7 +19,7 @@ API_URL = "https://api.twelvedata.com/time_series"
 
 ADMIN_ID = 6493871389 
 ALLOWED_USERS = [6493871389]
-MIN_SIGNAL_SCORE = 75
+MIN_SIGNAL_SCORE = 70  # تم خفض الحد الأدنى قليلاً لزيادة الفرص المتاحة
 
 ADMIN_USERNAME = "Marwa483"
 
@@ -82,27 +82,31 @@ def analyze_market(df: pd.DataFrame) -> dict:
     reasons_buy = []
     reasons_sell = []
 
+    # 1. تحليل المتوسطات المتحركة (EMA9 و EMA21)
     if latest["EMA9"] > latest["EMA21"]:
-        score_buy += 15
-        reasons_buy.append("متوسط EMA9 أعلى من EMA21 (إيجابي)")
-    else:
-        score_sell += 15
-        reasons_sell.append("متوسط EMA9 أقل من EMA21 (سلبي)")
+        score_buy += 20
+        reasons_buy.append("متوسط EMA9 أعلى من EMA21 (اتجاه صاعد)")
+    elif latest["EMA9"] < latest["EMA21"]:
+        score_sell += 20
+        reasons_sell.append("متوسط EMA9 أقل من EMA21 (اتجاه هابط)")
         
-    if rsi < 35:
-        score_buy += 25
-        reasons_buy.append(f"مؤشر القوة النسبية RSI منخفض ({rsi:.2f}) - تشبع بيعي")
-    elif rsi > 65:
-        score_sell += 25
-        reasons_sell.append(f"مؤشر القوة النسبية RSI مرتفع ({rsi:.2f}) - تشبع شرائي")
+    # 2. تحليل مؤشر القوة النسبية (RSI) - تم تصحيحه ليعطي مرونة للبيع والشراء
+    if rsi < 45:
+        score_buy += 20
+        reasons_buy.append(f"مؤشر القوة النسبية RSI يميل للتشبع البيعي ({rsi:.2f})")
+    elif rsi > 55:
+        score_sell += 20
+        reasons_sell.append(f"مؤشر القوة النسبية RSI يميل للتشبع الشرائي ({rsi:.2f})")
 
+    # 3. حركة السعر مقارنة بالشمعة السابقة
     if latest["close"] > prev["close"]:
         score_buy += 10
         reasons_buy.append("السعر الحالي مرتفع عن الشمعة السابقة")
-    else:
+    elif latest["close"] < prev["close"]:
         score_sell += 10
         reasons_sell.append("السعر الحالي منخفض عن الشمعة السابقة")
 
+    # تحديد الاتجاه الأقوى بناءً على النقاط
     if score_buy >= MIN_SIGNAL_SCORE and score_buy > score_sell:
         return {
             "signal": "BUY",
@@ -166,14 +170,11 @@ async def handle_user_messages(update: Update, context: ContextTypes.DEFAULT_TYP
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_text = update.message.text.strip().upper()
     
-    # تجاهل الأوامر التي تبدأ بـ / مثل /start
     if raw_text.startswith("/"):
         return
 
-    # تنسيق اسم الزوج (إزالة المسافات وتوحيد الفواصل)
     symbol = raw_text.replace("-", "/").replace(" ", "")
     
-    # إذا كتب المستخدم العملات متصلة مثل EURUSD يتم تحويلها تلقائياً إلى EUR/USD
     if "/" not in symbol and len(symbol) == 6:
         symbol = symbol[:3] + "/" + symbol[3:]
 
