@@ -12,13 +12,18 @@ from telegram.ext import (
     filters,
 )
 
-TELEGRAM_TOKEN = "8564085814:AAF81PdwGimUymHtbna1HVIBxHZKfP00A1A"
+# توكن البوت يقرأ من متغيرات البيئة في ريلواي، أو يمكنك وضعه هنا مباشرة
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8564085814:AAFr9XBwDA80jteJyxKKCBnAU9r5S55SMY4")
 TWELVE_DATA_API_KEY = "625159396fa746229e049c853ee698bf"
 API_URL = "https://api.twelvedata.com/time_series"
 
 ADMIN_ID = 6493871389 
+# قائمة الأيديهات المفعم لها اشتراك (قم بإضافة أي أيدي مفعل هنا أو دعه لك وحدك في البداية)
 ALLOWED_USERS = [6493871389]
 MIN_SIGNAL_SCORE = 75
+
+# معرف حسابك أو يوزرك لتواصل العملاء (استبدله بيوزرك في تيليجرام بدون @)
+ADMIN_USERNAME = "Marwa483"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -126,8 +131,23 @@ def analyze_market(df: pd.DataFrame) -> dict:
     }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # التحقق مما إذا كان المستخدم مشتركاً أم لا
+    if user_id not in ALLOWED_USERS:
+        await update.message.reply_text(
+            "🔒 **عذراً، هذا البوت مدفوع ويتطلب اشتراكاً مفـعلاً.**\n\n"
+            "للإشتراك والحصول على الصلاحية، يرجى تحويل قيمة الاشتراك وتواصل مع مالك البوت وإرسال إيصال الدفع مع الآيدي الخاص بك:\n\n"
+            f"👤 آيديك الخاص: `{user_id}`\n"
+            f"💬 للتواصل وتحويل الإيصال: @{ADMIN_USERNAME}\n\n"
+            "بمجرد التحقق، سيتم تفعيل البوت لحسابك فوراً! 🚀",
+            parse_mode="Markdown"
+        )
+        return
+
     await update.message.reply_text(
-        "🔥 أهلاً بك يا مالك البوت في 4B AI TRADER PRO\n\n"
+        "🔥 أهلاً بك يا غالي في 4B AI TRADER PRO\n\n"
+        "حسابك مفعل بنجاح ✅\n"
         "أرسل اسم الزوج الآن للحصول على التحليل وإشارات البيع والشراء:\n"
         "EUR/USD أو GBP/USD"
     )
@@ -135,6 +155,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_user_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
+    
+    user_id = update.effective_user.id
+    if user_id not in ALLOW_USERS:
+        await update.message.reply_text(
+            f"❌ عذراً، حسابك غير مفعل.\nالرجاء التواصل مع المالك لتفعيل اشتراكك وإرسال إيصال الدفع: @{ADMIN_USERNAME}\nآيديك هو: `{user_id}`",
+            parse_mode="Markdown"
+        )
+        return
+        
     await analyze_command(update, context)
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
