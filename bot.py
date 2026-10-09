@@ -21,7 +21,7 @@ ADMIN_ID = 6493871389
 ALLOWED_USERS = [6493871389]
 MIN_SIGNAL_SCORE = 70  # تم خفض الحد الأدنى قليلاً لزيادة الفرص المتاحة
 
-ADMIN_USERNAME = "marwa483"
+ADMIN_USERNAME = "marwa4839"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
