@@ -1,123 +1,128 @@
 # ============================================================
 # 4B AI TRADER PRO
-# Advanced Market Analysis Engine + Telegram Bot
+# FOREX 1M - MANUAL SIGNAL EDITION
 # ============================================================
 
 import os
-import math
 import logging
 import requests
 import pandas as pd
 import numpy as np
 
+from datetime import datetime, timezone
+
 from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    ContextTypes
+    ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 # ============================================================
 # CONFIG
 # ============================================================
 
-TOKEN="8564085814:AAHQF6mBUz5Ju6AGbpyC-5eF5AGe_lBP3QY"
-# مصدر البيانات
-DATA_URL = "https://api.binance.com/api/v3/klines"
+TELEGRAM_TOKEN="8564085814:AAFr9XBwDA80jteJyxKKCBnAU9r5S55SMY4"
+TWELVE_DATA_API_KEY ="625159396fa746229e049c853ee698bf"
 
-DEFAULT_INTERVAL = "5m"
-CANDLE_LIMIT = 250
+API_URL = "https://api.twelvedata.com/time_series"
 
-# ============================================================
-# LOGGING
-# ============================================================
+INTERVAL = "1min"
+OUTPUT_SIZE = 150
+
+# أقل درجة مطلوبة لإظهار الصفقة
+MIN_SIGNAL_SCORE = 75
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
-logger = logging.getLogger("4B_AI_TRADER")
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# GET MARKET DATA
+# GET FOREX DATA
 # ============================================================
 
-def get_market_data(pair, interval=DEFAULT_INTERVAL, limit=CANDLE_LIMIT):
-
-    pair = pair.upper()
+def get_market_data(symbol: str):
 
     params = {
-        "symbol": pair,
-        "interval": interval,
-        "limit": limit
+        "symbol": symbol,
+        "interval": INTERVAL,
+        "outputsize": OUTPUT_SIZE,
+        "apikey": TWELVE_DATA_API_KEY,
+        "format": "JSON"
     }
 
     response = requests.get(
-        DATA_URL,
+        API_URL,
         params=params,
-        timeout=10
+        timeout=15
     )
 
     response.raise_for_status()
 
     data = response.json()
 
-    if not isinstance(data, list) or len(data) < 50:
-        raise ValueError("بيانات السوق غير كافية.")
+    if data.get("status") == "error":
+        raise Exception(data.get("message", "API Error"))
 
-    df = pd.DataFrame(data, columns=[
-        "time",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "close_time",
-        "quote_volume",
-        "trades",
-        "buy_volume",
-        "buy_quote_volume",
-        "ignore"
-    ])
+    if "values" not in data:
+        raise Exception("لم تصل بيانات السوق.")
 
-    numeric_columns = [
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume"
-    ]
+    df = pd.DataFrame(data["values"])
 
-    for column in numeric_columns:
+    required = ["open", "high", "low", "close"]
+
+    for column in required:
         df[column] = pd.to_numeric(
             df[column],
             errors="coerce"
         )
 
-    df.dropna(inplace=True)
+    df["datetime"] = pd.to_datetime(df["datetime"])
+
+    df = df.sort_values("datetime")
+    df = df.reset_index(drop=True)
+
+    df = df.dropna(
+        subset=["open", "high", "low", "close"]
+    )
 
     return df
 
 
 # ============================================================
-# EMA
+# TECHNICAL INDICATORS
 # ============================================================
 
-def calculate_ema(df, period):
+def calculate_indicators(df):
 
-    return df["close"].ewm(
-        span=period,
+    # -------------------------
+    # EMA
+    # -------------------------
+
+    df["EMA9"] = df["close"].ewm(
+        span=9,
         adjust=False
     ).mean()
 
+    df["EMA21"] = df["close"].ewm(
+        span=21,
+        adjust=False
+    ).mean()
 
-# ============================================================
-# RSI
-# ============================================================
+    df["EMA50"] = df["close"].ewm(
+        span=50,
+        adjust=False
+    ).mean()
 
-def calculate_rsi(df, period=14):
+    # -------------------------
+    # RSI 14
+    # -------------------------
 
     delta = df["close"].diff()
 
@@ -125,27 +130,26 @@ def calculate_rsi(df, period=14):
     loss = -delta.clip(upper=0)
 
     avg_gain = gain.ewm(
-        alpha=1 / period,
+        alpha=1 / 14,
+        min_periods=14,
         adjust=False
     ).mean()
 
     avg_loss = loss.ewm(
-        alpha=1 / period,
+        alpha=1 / 14,
+        min_periods=14,
         adjust=False
     ).mean()
 
     rs = avg_gain / avg_loss.replace(0, np.nan)
 
-    rsi = 100 - (100 / (1 + rs))
+    df["RSI"] = 100 - (
+        100 / (1 + rs)
+    )
 
-    return rsi.fillna(50)
-
-
-# ============================================================
-# MACD
-# ============================================================
-
-def calculate_macd(df):
+    # -------------------------
+    # MACD
+    # -------------------------
 
     ema12 = df["close"].ewm(
         span=12,
@@ -157,434 +161,335 @@ def calculate_macd(df):
         adjust=False
     ).mean()
 
-    macd = ema12 - ema26
+    df["MACD"] = ema12 - ema26
 
-    signal = macd.ewm(
+    df["MACD_SIGNAL"] = df["MACD"].ewm(
         span=9,
         adjust=False
     ).mean()
 
-    histogram = macd - signal
+    # -------------------------
+    # ATR
+    # -------------------------
 
-    return macd, signal, histogram
+    previous_close = df["close"].shift(1)
 
+    tr1 = df["high"] - df["low"]
+    tr2 = abs(df["high"] - previous_close)
+    tr3 = abs(df["low"] - previous_close)
 
-# ============================================================
-# SUPPORT / RESISTANCE
-# ============================================================
+    true_range = pd.concat(
+        [tr1, tr2, tr3],
+        axis=1
+    ).max(axis=1)
 
-def calculate_support_resistance(df, lookback=50):
+    df["ATR"] = true_range.rolling(14).mean()
 
-    recent = df.tail(lookback)
+    # -------------------------
+    # Support / Resistance
+    # -------------------------
 
-    support = recent["low"].min()
-
-    resistance = recent["high"].max()
-
-    return support, resistance
-
-
-# ============================================================
-# MARKET STRUCTURE
-# ============================================================
-
-def calculate_market_structure(df):
-
-    recent = df.tail(20)
-
-    highs = recent["high"].values
-    lows = recent["low"].values
-
-    higher_highs = highs[-1] > highs[-5]
-    higher_lows = lows[-1] > lows[-5]
-
-    lower_highs = highs[-1] < highs[-5]
-    lower_lows = lows[-1] < lows[-5]
-
-    if higher_highs and higher_lows:
-        return "صاعد"
-
-    if lower_highs and lower_lows:
-        return "هابط"
-
-    return "عرضي"
-
-
-# ============================================================
-# ANALYSIS ENGINE
-# ============================================================
-
-def market_analysis(pair, interval=DEFAULT_INTERVAL):
-
-    df = get_market_data(
-        pair,
-        interval,
-        CANDLE_LIMIT
+    df["SUPPORT"] = (
+        df["low"]
+        .rolling(30)
+        .min()
     )
 
-    # --------------------------------------------------------
-    # Indicators
-    # --------------------------------------------------------
+    df["RESISTANCE"] = (
+        df["high"]
+        .rolling(30)
+        .max()
+    )
 
-    df["EMA9"] = calculate_ema(df, 9)
-    df["EMA21"] = calculate_ema(df, 21)
-    df["EMA50"] = calculate_ema(df, 50)
-    df["EMA200"] = calculate_ema(df, 200)
+    return df
 
-    df["RSI"] = calculate_rsi(df)
 
-    (
-        df["MACD"],
-        df["MACD_SIGNAL"],
-        df["MACD_HIST"]
-    ) = calculate_macd(df)
+# ============================================================
+# CANDLE ANALYSIS
+# ============================================================
 
-    # --------------------------------------------------------
-    # Current values
-    # --------------------------------------------------------
+def candle_analysis(row):
 
-    last = df.iloc[-1]
+    candle_range = row["high"] - row["low"]
 
-    price = float(last["close"])
+    if candle_range <= 0:
+        return "NEUTRAL"
 
-    ema9 = float(last["EMA9"])
-    ema21 = float(last["EMA21"])
-    ema50 = float(last["EMA50"])
-    ema200 = float(last["EMA200"])
+    body = abs(
+        row["close"] - row["open"]
+    )
 
-    rsi = float(last["RSI"])
+    body_ratio = body / candle_range
 
-    macd = float(last["MACD"])
-    macd_signal = float(last["MACD_SIGNAL"])
-    macd_hist = float(last["MACD_HIST"])
+    # شمعة صاعدة قوية
+    if (
+        row["close"] > row["open"]
+        and body_ratio >= 0.55
+    ):
+        return "BULLISH"
 
-    # --------------------------------------------------------
-    # Support / Resistance
-    # --------------------------------------------------------
+    # شمعة هابطة قوية
+    if (
+        row["close"] < row["open"]
+        and body_ratio >= 0.55
+    ):
+        return "BEARISH"
 
-    support, resistance = calculate_support_resistance(df)
+    return "NEUTRAL"
 
-    # --------------------------------------------------------
-    # Market structure
-    # --------------------------------------------------------
 
-    structure = calculate_market_structure(df)
+# ============================================================
+# MARKET ANALYSIS
+# ============================================================
+
+def analyze_market(df):
+
+    latest = df.iloc[-1]
+    previous = df.iloc[-2]
+
+    score_buy = 0
+    score_sell = 0
+
+    reasons_buy = []
+    reasons_sell = []
 
     # ========================================================
-    # SCORE SYSTEM
+    # EMA TREND
     # ========================================================
 
-    bullish_score = 0
-    bearish_score = 0
-
-    reasons_bullish = []
-    reasons_bearish = []
-
-    # --------------------------------------------------------
-    # EMA 9 / 21
-    # --------------------------------------------------------
-
-    if ema9 > ema21:
-
-        bullish_score += 1
-
-        reasons_bullish.append(
-            "EMA 9 أعلى من EMA 21"
+    if (
+        latest["EMA9"] > latest["EMA21"]
+        and latest["EMA21"] > latest["EMA50"]
+    ):
+        score_buy += 25
+        reasons_buy.append(
+            "ترتيب المتوسطات EMA يدعم الصعود"
         )
 
-    elif ema9 < ema21:
-
-        bearish_score += 1
-
-        reasons_bearish.append(
-            "EMA 9 أسفل EMA 21"
+    elif (
+        latest["EMA9"] < latest["EMA21"]
+        and latest["EMA21"] < latest["EMA50"]
+    ):
+        score_sell += 25
+        reasons_sell.append(
+            "ترتيب المتوسطات EMA يدعم الهبوط"
         )
 
-    # --------------------------------------------------------
-    # EMA 50 / 200
-    # --------------------------------------------------------
-
-    if ema50 > ema200:
-
-        bullish_score += 2
-
-        reasons_bullish.append(
-            "EMA 50 أعلى من EMA 200"
-        )
-
-    elif ema50 < ema200:
-
-        bearish_score += 2
-
-        reasons_bearish.append(
-            "EMA 50 أسفل EMA 200"
-        )
-
-    # --------------------------------------------------------
-    # Price vs EMA 200
-    # --------------------------------------------------------
-
-    if price > ema200:
-
-        bullish_score += 2
-
-        reasons_bullish.append(
-            "السعر فوق EMA 200"
-        )
-
-    elif price < ema200:
-
-        bearish_score += 2
-
-        reasons_bearish.append(
-            "السعر تحت EMA 200"
-        )
-
-    # --------------------------------------------------------
+    # ========================================================
     # RSI
-    # --------------------------------------------------------
+    # ========================================================
 
-    if 50 < rsi < 70:
+    rsi = latest["RSI"]
 
-        bullish_score += 1
-
-        reasons_bullish.append(
-            f"RSI إيجابي ({rsi:.1f})"
+    if 52 <= rsi <= 68:
+        score_buy += 15
+        reasons_buy.append(
+            f"RSI داعم للشراء ({rsi:.1f})"
         )
 
-    elif 30 < rsi < 50:
-
-        bearish_score += 1
-
-        reasons_bearish.append(
-            f"RSI سلبي ({rsi:.1f})"
+    elif 32 <= rsi <= 48:
+        score_sell += 15
+        reasons_sell.append(
+            f"RSI داعم للبيع ({rsi:.1f})"
         )
 
-    elif rsi >= 70:
-
-        reasons_bullish.append(
-            f"RSI في تشبع شرائي ({rsi:.1f})"
-        )
-
-    elif rsi <= 30:
-
-        reasons_bearish.append(
-            f"RSI في تشبع بيعي ({rsi:.1f})"
-        )
-
-    # --------------------------------------------------------
+    # ========================================================
     # MACD
-    # --------------------------------------------------------
+    # ========================================================
 
-    if macd > macd_signal and macd_hist > 0:
-
-        bullish_score += 2
-
-        reasons_bullish.append(
-            "MACD يعطي زخمًا صاعدًا"
+    if (
+        latest["MACD"]
+        > latest["MACD_SIGNAL"]
+        and latest["MACD"] > previous["MACD"]
+    ):
+        score_buy += 20
+        reasons_buy.append(
+            "زخم MACD صاعد"
         )
 
-    elif macd < macd_signal and macd_hist < 0:
-
-        bearish_score += 2
-
-        reasons_bearish.append(
-            "MACD يعطي زخمًا هابطًا"
+    elif (
+        latest["MACD"]
+        < latest["MACD_SIGNAL"]
+        and latest["MACD"] < previous["MACD"]
+    ):
+        score_sell += 20
+        reasons_sell.append(
+            "زخم MACD هابط"
         )
 
-    # --------------------------------------------------------
-    # Market Structure
-    # --------------------------------------------------------
+    # ========================================================
+    # CANDLE
+    # ========================================================
 
-    if structure == "صاعد":
+    candle = candle_analysis(latest)
 
-        bullish_score += 2
-
-        reasons_bullish.append(
-            "هيكل السوق صاعد"
+    if candle == "BULLISH":
+        score_buy += 15
+        reasons_buy.append(
+            "الشمعة الحالية صاعدة"
         )
 
-    elif structure == "هابط":
+    elif candle == "BEARISH":
+        score_sell += 15
+        reasons_sell.append(
+            "الشمعة الحالية هابطة"
+        )
 
-        bearish_score += 2
+    # ========================================================
+    # PRICE POSITION
+    # ========================================================
 
-        reasons_bearish.append(
-            "هيكل السوق هابط"
+    if latest["close"] > latest["EMA21"]:
+        score_buy += 10
+        reasons_buy.append(
+            "السعر أعلى EMA21"
+        )
+
+    elif latest["close"] < latest["EMA21"]:
+        score_sell += 10
+        reasons_sell.append(
+            "السعر أسفل EMA21"
+        )
+
+    # ========================================================
+    # SUPPORT / RESISTANCE
+    # ========================================================
+
+    support = latest["SUPPORT"]
+    resistance = latest["RESISTANCE"]
+    price = latest["close"]
+
+    # لا ندخل شراء مباشرة تحت مقاومة قريبة
+    resistance_distance = (
+        resistance - price
+    )
+
+    support_distance = (
+        price - support
+    )
+
+    if (
+        resistance_distance > 0
+        and resistance_distance
+        > latest["ATR"] * 0.35
+    ):
+        score_buy += 15
+        reasons_buy.append(
+            "يوجد مجال نسبي قبل المقاومة"
+        )
+
+    if (
+        support_distance > 0
+        and support_distance
+        > latest["ATR"] * 0.35
+    ):
+        score_sell += 15
+        reasons_sell.append(
+            "يوجد مجال نسبي قبل الدعم"
         )
 
     # ========================================================
     # FINAL DECISION
     # ========================================================
 
-    difference = bullish_score - bearish_score
+    if score_buy >= MIN_SIGNAL_SCORE and score_buy > score_sell:
 
-    if difference >= 5:
+        return {
+            "signal": "BUY",
+            "score": score_buy,
+            "price": price,
+            "rsi": rsi,
+            "support": support,
+            "resistance": resistance,
+            "reasons": reasons_buy,
+            "candle": candle,
+            "time": latest["datetime"]
+        }
 
-        direction = "📈 صاعد قوي"
-        signal = "🟢 CALL محتمل"
-        confidence = min(
-            95,
-            60 + difference * 5
-        )
+    if score_sell >= MIN_SIGNAL_SCORE and score_sell > score_buy:
 
-    elif difference >= 2:
-
-        direction = "📈 صاعد"
-        signal = "🟢 CALL بحذر"
-        confidence = min(
-            85,
-            55 + difference * 5
-        )
-
-    elif difference <= -5:
-
-        direction = "📉 هابط قوي"
-        signal = "🔴 PUT محتمل"
-        confidence = min(
-            95,
-            60 + abs(difference) * 5
-        )
-
-    elif difference <= -2:
-
-        direction = "📉 هابط"
-        signal = "🔴 PUT بحذر"
-        confidence = min(
-            85,
-            55 + abs(difference) * 5
-        )
-
-    else:
-
-        direction = "⚪ عرضي / غير واضح"
-        signal = "⏳ NO TRADE"
-        confidence = 50
+        return {
+            "signal": "SELL",
+            "score": score_sell,
+            "price": price,
+            "rsi": rsi,
+            "support": support,
+            "resistance": resistance,
+            "reasons": reasons_sell,
+            "candle": candle,
+            "time": latest["datetime"]
+        }
 
     # ========================================================
-    # SUPPORT / RESISTANCE DISTANCE
+    # NO TRADE
     # ========================================================
 
-    support_distance = (
-        ((price - support) / price) * 100
-        if price != 0
-        else 0
-    )
-
-    resistance_distance = (
-        ((resistance - price) / price) * 100
-        if price != 0
-        else 0
-    )
-
-    # ========================================================
-    # BUILD REPORT
-    # ========================================================
-
-    bullish_text = "\n".join(
-        f"• {x}"
-        for x in reasons_bullish
-    )
-
-    bearish_text = "\n".join(
-        f"• {x}"
-        for x in reasons_bearish
-    )
-
-    report = f"""
-🤖 4B AI TRADER PRO
-━━━━━━━━━━━━━━━━━━
-
-📊 الزوج: {pair}
-⏱ الفريم: {interval}
-
-💰 السعر الحالي:
-{price:.8f}
-
-━━━━━━━━━━━━━━━━━━
-📈 الاتجاه العام
-{direction}
-
-🏗 هيكل السوق:
-{structure}
-
-━━━━━━━━━━━━━━━━━━
-📐 المتوسطات
-
-EMA 9   : {ema9:.8f}
-EMA 21  : {ema21:.8f}
-EMA 50  : {ema50:.8f}
-EMA 200 : {ema200:.8f}
-
-━━━━━━━━━━━━━━━━━━
-📊 RSI
-
-RSI 14 : {rsi:.2f}
-
-━━━━━━━━━━━━━━━━━━
-📉 MACD
-
-MACD        : {macd:.8f}
-Signal      : {macd_signal:.8f}
-Histogram   : {macd_hist:.8f}
-
-━━━━━━━━━━━━━━━━━━
-🧱 الدعم والمقاومة
-
-الدعم:
-{support:.8f}
-
-المقاومة:
-{resistance:.8f}
-
-📍 بُعد السعر عن الدعم:
-{support_distance:.2f}%
-
-📍 بُعد السعر عن المقاومة:
-{resistance_distance:.2f}%
-
-━━━━━━━━━━━━━━━━━━
-🧠 نقاط الصعود
-
-{bullish_text if bullish_text else "• لا توجد عوامل صعود قوية"}
-
-━━━━━━━━━━━━━━━━━━
-⚠️ نقاط الهبوط
-
-{bearish_text if bearish_text else "• لا توجد عوامل هبوط قوية"}
-
-━━━━━━━━━━━━━━━━━━
-🎯 النتيجة
-
-🟢 قوة الصعود:
-{bullish_score}
-
-🔴 قوة الهبوط:
-{bearish_score}
-
-📊 الثقة التحليلية:
-{confidence:.0f}%
-
-🚦 الإشارة:
-{signal}
-
-━━━━━━━━━━━━━━━━━━
-⚠️ تنبيه
-
-هذا تحليل آلي مبني على المؤشرات
-ولا يمثل ضمانًا للربح.
-
-استخدم إدارة رأس المال
-ولا تدخل صفقة اعتمادًا على
-إشارة واحدة فقط.
-
-🔥 4B AI TRADER PRO
-"""
-
-    return report
+    return {
+        "signal": "NO_TRADE",
+        "score": max(
+            score_buy,
+            score_sell
+        ),
+        "price": price,
+        "rsi": rsi,
+        "support": support,
+        "resistance": resistance,
+        "time": latest["datetime"]
+    }
 
 
 # ============================================================
-# TELEGRAM / START
+# FORMAT SIGNAL
+# ============================================================
+
+def format_signal(symbol, result):
+
+    if result["signal"] == "NO_TRADE":
+
+        return (
+            "⚪ 4B AI TRADER PRO\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"💱 الزوج: {symbol}\n"
+            "⏱️ الفريم: 1M\n\n"
+            "🚫 لا توجد صفقة حاليًا\n\n"
+            "السوق لا يحقق شروط الدخول المطلوبة.\n"
+            "⏳ انتظر فرصة أوضح.\n"
+            "━━━━━━━━━━━━━━━━━━"
+        )
+
+    direction = (
+        "🟢 شراء CALL"
+        if result["signal"] == "BUY"
+        else
+        "🔴 بيع PUT"
+    )
+
+    reasons = "\n".join(
+        f"• {reason}"
+        for reason in result["reasons"]
+    )
+
+    return (
+        "🔥 4B AI TRADER PRO\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"💱 الزوج: {symbol}\n"
+        "⏱️ الفريم: 1M\n\n"
+        f"📌 الإشارة: {direction}\n"
+        f"🎯 وقت الدخول: الآن\n"
+        "⏳ مدة الصفقة: 1 دقيقة\n\n"
+        f"📊 قوة الإشارة: {result['score']}%\n"
+        f"💰 السعر: {result['price']:.5f}\n"
+        f"📈 RSI: {result['rsi']:.2f}\n\n"
+        "🧠 أسباب الإشارة:\n"
+        f"{reasons}\n\n"
+        "⚠️ لا توجد توصية مضمونة؛ "
+        "تحقق من السعر على منصتك قبل التنفيذ.\n"
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+
+# ============================================================
+# /START
 # ============================================================
 
 async def start(
@@ -593,106 +498,120 @@ async def start(
 ):
 
     await update.message.reply_text(
-        """
-🤖 4B AI TRADER PRO
-
-🧠 محرك تحليل السوق جاهز.
-
-الأوامر:
-
-/analyze BTCUSDT
-/analyze ETHUSDT
-
-مثال:
-
-/analyze BTCUSDT
-
-سيقوم المحرك بتحليل:
-
-📈 EMA 9 / 21 / 50 / 200
-📊 RSI
-📉 MACD
-🧱 الدعم والمقاومة
-🏗 هيكل السوق
-🎯 قوة الاتجاه
-🚦 السيناريو المحتمل
-"""
+        "🔥 أهلاً بك في 4B AI TRADER PRO\n\n"
+        "📊 Forex 1M\n"
+        "🧠 تحليل متعدد المؤشرات\n"
+        "🎯 صفقات يدوية فقط\n\n"
+        "أرسل الزوج بهذا الشكل:\n"
+        "EUR/USD\n\n"
+        "أو:\n"
+        "GBP/USD\n\n"
+        "إذا لم تتوفر شروط قوية سأخبرك:\n"
+        "🚫 لا توجد صفقة حاليًا"
     )
 
 
 # ============================================================
-# ANALYZE COMMAND
+# /HELP
 # ============================================================
 
-async def analyze(
+async def help_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if not context.args:
+    await update.message.reply_text(
+        "📖 طريقة الاستخدام:\n\n"
+        "أرسل اسم زوج الفوركس فقط.\n\n"
+        "مثال:\n"
+        "EUR/USD\n\n"
+        "أو:\n"
+        "GBP/USD\n\n"
+        "البوت يحلل السوق على فريم 1M "
+        "ويعطي صفقة فقط إذا تجاوزت شروط "
+        "القوة المحددة."
+    )
 
-        await update.message.reply_text(
-            """
-❌ لم تحدد الزوج.
 
-مثال:
+# ============================================================
+# SYMBOL MESSAGE
+# ============================================================
 
-/analyze BTCUSDT
-"""
-        )
+async def analyze_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
+    if not update.message:
         return
 
-    pair = context.args[0].upper()
+    symbol = update.message.text.strip().upper()
 
-    # منع إدخال رموز غريبة
-    if not pair.isalnum():
+    # تنظيف بعض الصيغ
+    symbol = symbol.replace("-", "/")
+    symbol = symbol.replace(" ", "")
 
+    if "/" not in symbol:
         await update.message.reply_text(
-            "❌ رمز الزوج غير صالح."
+            "❌ صيغة الزوج غير صحيحة.\n\n"
+            "اكتب مثلًا:\n"
+            "EUR/USD"
         )
-
         return
 
     await update.message.reply_text(
-        f"🧠 جاري تحليل {pair}..."
+        f"🔎 جاري تحليل {symbol}\n"
+        "⏱️ Forex 1M..."
     )
 
     try:
 
-        result = market_analysis(pair)
+        df = get_market_data(symbol)
 
-        await update.message.reply_text(
+        if len(df) < 60:
+            raise Exception(
+                "بيانات السوق غير كافية للتحليل."
+            )
+
+        df = calculate_indicators(df)
+
+        result = analyze_market(df)
+
+        message = format_signal(
+            symbol,
             result
         )
 
-    except requests.exceptions.RequestException:
-
         await update.message.reply_text(
-            """
-❌ تعذر الاتصال بمصدر بيانات السوق.
-
-حاول مرة أخرى لاحقًا.
-"""
+            message
         )
 
-    except Exception as e:
+    except Exception as error:
 
         logger.exception(
             "Analysis error"
         )
 
         await update.message.reply_text(
-            f"""
-❌ حدث خطأ أثناء التحليل.
-
-الزوج:
-{pair}
-
-الخطأ:
-{str(e)}
-"""
+            "❌ حدث خطأ أثناء تحليل الزوج.\n\n"
+            f"السبب: {error}\n\n"
+            "تأكد من اسم الزوج ومفتاح API."
         )
+
+
+# ============================================================
+# ERROR HANDLER
+# ============================================================
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    logger.error(
+        "Exception while handling update:",
+        exc_info=context.error
+    )
 
 
 # ============================================================
@@ -701,44 +620,59 @@ async def analyze(
 
 def main():
 
-    if TOKEN == "PUT_YOUR_TELEGRAM_TOKEN_HERE":
-
-        raise ValueError(
-            "ضع Telegram Bot Token في متغير TELEGRAM_BOT_TOKEN"
+    if not TELEGRAM_TOKEN:
+        raise RuntimeError(
+            "ضع TELEGRAM_TOKEN في Environment Variables"
         )
 
-    app = (
-        Application
-        .builder()
-        .token(TOKEN)
+    if not TWELVE_DATA_API_KEY:
+        raise RuntimeError(
+            "ضع TWELVE_DATA_API_KEY في Environment Variables"
+        )
+
+    application = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
         .build()
     )
 
-    app.add_handler(
+    application.add_handler(
         CommandHandler(
             "start",
             start
         )
     )
 
-    app.add_handler(
+    application.add_handler(
         CommandHandler(
-            "analyze",
-            analyze
+            "help",
+            help_command
         )
     )
 
-    print(
-        "🤖 4B AI TRADER PRO Running..."
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            analyze_command
+        )
     )
 
-    app.run_polling()
+    application.add_error_handler(
+        error_handler
+    )
+
+    print(
+        "🔥 4B AI TRADER PRO - FOREX 1M STARTED"
+    )
+
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES
+    )
 
 
 # ============================================================
 # RUN
 # ============================================================
-print("🔥 بدأ تشغيل 4B AI TRADER PRO")
 
 if __name__ == "__main__":
     main()
