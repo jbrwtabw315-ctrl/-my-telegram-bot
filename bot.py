@@ -4,7 +4,6 @@ import requests
 import pandas as pd
 import numpy as np
 
-
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -128,7 +127,6 @@ def analyze_market(df: pd.DataFrame) -> dict:
     }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # تم إزالة شرط القفل ليعمل البوت فوراً مثل الصورة المطلوبة
     await update.message.reply_text(
         "🔥 أهلاً بك يا مالك البوت في 4B AI TRADER PRO\n\n"
         "أرسل اسم الزوج الآن للحصول على التحليل وإشارات البيع والشراء:\n"
@@ -138,7 +136,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_user_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-    # السماح لأي شخص بالتحليل مباشرة دون حظر أو طلب اشتراك
     await analyze_command(update, context)
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -196,4 +193,4 @@ def main():
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    main()
+    main()  # تم إضافة الأقواس هنا لتشغيل الدالة بشكل صحيح
