@@ -86,7 +86,7 @@ def analyze_market(df: pd.DataFrame) -> dict:
     else:
         score_sell += 15
         reasons_sell.append("متوسط EMA9 أقل من EMA21 (سلبي)")
-
+        
     if rsi < 35:
         score_buy += 25
         reasons_buy.append(f"مؤشر القوة النسبية RSI منخفض ({rsi:.2f}) - تشبع بيعي")
@@ -127,34 +127,7 @@ def analyze_market(df: pd.DataFrame) -> dict:
     }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_name = update.effective_user.full_name
-    username = f"@{update.effective_user.username}" if update.effective_user.username else "لا يوجد"
-
-    if user_id not in ALLOWED_USERS:
-        admin_username = "marwa4839"  # يوزرك الصحيح
-        
-        await update.message.reply_text(
-            "⚠️ **غير مصرح لك باستخدام البوت حالياً.**\n\n"
-            "اشتراك البوت مدفوع لتفعيل خدمة التحليل على مدار 24 ساعة.\n"
-            "💳 للاشتراك، يرجى التواصل مباشرة مع المالك عبر الرابط التالي:\n"
-            f"👉 https://t.me/{admin_username}\n\n"
-            "بعد التحويل، أرسل صورة الإيصال هنا أو هناك وسيتم تفعيل حسابك فوراً.\n\n"
-            f"معرفك للتفعيل: `{user_id}`"
-        )
-        
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"🔔 محاولة دخول جديدة من مستخدم غير مسجل:\n"
-                     f"👤 الاسم: {user_name}\n"
-                     f"🔗 المعرف: {username}\n"
-                     f"🆔 ID: `{user_id}`"
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify admin: {e}")
-        return
-
+    # تم إزالة شرط القفل ليعمل البوت فوراً مثل الصورة المطلوبة
     await update.message.reply_text(
         "🔥 أهلاً بك يا مالك البوت في 4B AI TRADER PRO\n\n"
         "أرسل اسم الزوج الآن للحصول على التحليل وإشارات البيع والشراء:\n"
@@ -164,33 +137,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_user_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-    user_id = update.effective_user.id
-
-    if user_id not in ALLOWED_USERS:
-        user_name = update.effective_user.full_name
-        if update.message.photo:
-            await context.bot.send_photo(
-                chat_id=ADMIN_ID,
-                photo=update.message.photo[-1].file_id,
-                caption=f"📨 إيصال جديد من المستخدم:\n👤 الاسم: {user_name}\n🆔 ID: `{user_id}`"
-            )
-            await update.message.reply_text("✅ تم إرسال الإيصال إلى الإدارة بنجاح. سيتم التحقق وتفعيل حسابك قريباً.")
-        else:
-            text = update.message.text
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"💬 رسالة جديدة من مستخدم غير مسجل (`{user_id}`):\n{text}"
-            )
-            await update.message.reply_text("📨 تم إرسال رسالتك إلى إدارة البوت، سيتم الرد عليك قريباً.")
-        return
-
+    # السماح لأي شخص بالتحليل مباشرة دون حظر أو طلب اشتراك
     await analyze_command(update, context)
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ALLOWED_USERS:
-        return
-
     symbol = update.message.text.strip().upper().replace("-", "/").replace(" ", "")
     if "/" not in symbol:
         await update.message.reply_text("❌ صيغة خاطئة. اكتب الزوج هكذا: EUR/USD")
