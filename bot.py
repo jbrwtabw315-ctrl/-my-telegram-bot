@@ -10,8 +10,8 @@ TELEGRAM_TOKEN = "8564085814:AAFr9XBwDA80jteJyxKKCBnAU9r5S55SMY4"
 TWELVE_DATA_API_KEY = "625159396fa746229e049c853ee698bf"
 API_URL = "https://api.twelvedata.com/time_series"
 
-# تم تصحيح رقم الآيدي الخاص بك هنا بدقة:
-ALLOWED_USERS = [649387139]
+# الآيدي الصحيح والمطابق تماماً لمعرفك على تيليجرام:
+ALLOWED_USERS = [6493871389]
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
