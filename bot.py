@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 # توكن البوت
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8564085814:AAFr9XBwDA80jteJyxKKCBnAU9r5S55SMY4")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8564085814:AAF81PdwGimUymHtbna1HVIBxHZKfP00A1A")
 TWELVE_DATA_API_KEY = "625159396fa746229e049c853ee698bf"
 API_URL = "https://api.twelvedata.com/time_series"
 
